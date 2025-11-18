@@ -1,0 +1,2 @@
+stream-output=true
+reporter=append-only

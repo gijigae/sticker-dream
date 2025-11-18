@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "server": "node --env-file=.env --watch src/server.ts"
+    "server": "./run-server.sh",
+    "server:verbose": "tsx --env-file=.env --watch src/server.ts"
   },
   "keywords": [],
   "author": "Wes Bos (https://wesbos.com)",
@@ -20,5 +21,9 @@
     "hono": "^4.7.11",
     "openai": "^6.8.1",
     "vite": "^7.2.2"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^11.0.0",
+    "tsx": "^4.20.6"
   }
 }

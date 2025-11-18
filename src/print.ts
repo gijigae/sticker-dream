@@ -15,6 +15,7 @@ export interface Printer {
   status: string;
   isDefault: boolean;
   isUSB: boolean;
+  isBluetooth: boolean;
   description?: string;
 }
 
@@ -40,11 +41,15 @@ export interface PrintOptions {
  */
 export async function getAllPrinters(): Promise<Printer[]> {
   try {
+    console.log(`🔍 getAllPrinters() - Querying system printers...`);
+    
     // Get printer names and status
     const { stdout: printerList } = await execAsync("lpstat -p -d");
+    console.log(`📋 lpstat -p -d output:\n${printerList}`);
 
     // Get printer URIs/devices
     const { stdout: printerDevices } = await execAsync("lpstat -v");
+    console.log(`📋 lpstat -v output:\n${printerDevices}`);
 
     const printers: Printer[] = [];
     const lines = printerList.split("\n");
@@ -55,6 +60,7 @@ export async function getAllPrinters(): Promise<Printer[]> {
     const defaultMatch = printerList.match(/system default destination: (.+)/);
     if (defaultMatch) {
       defaultPrinter = defaultMatch[1];
+      console.log(`⭐ Default printer: ${defaultPrinter}`);
     }
 
     // Parse each printer
@@ -68,13 +74,17 @@ export async function getAllPrinters(): Promise<Printer[]> {
         const deviceLine = deviceLines.find((d) => d.includes(printerName));
         let uri = "";
         let isUSB = false;
+        let isBluetooth = false;
 
         if (deviceLine) {
           const uriMatch = deviceLine.match(/device for (.+?): (.+)/);
           if (uriMatch) {
             uri = uriMatch[2];
+            const lowerUri = uri.toLowerCase();
             // Check if it's a USB printer
-            isUSB = uri.toLowerCase().includes("usb");
+            isUSB = lowerUri.includes("usb");
+            // Check if it's a Bluetooth printer
+            isBluetooth = lowerUri.includes("bluetooth") || lowerUri.includes("bth");
           }
         }
 
@@ -84,6 +94,7 @@ export async function getAllPrinters(): Promise<Printer[]> {
           status,
           isDefault: printerName === defaultPrinter,
           isUSB,
+          isBluetooth,
           description: status,
         });
       }
@@ -106,6 +117,15 @@ export async function getAllPrinters(): Promise<Printer[]> {
 export async function getUSBPrinters(): Promise<Printer[]> {
   const allPrinters = await getAllPrinters();
   return allPrinters.filter((p) => p.isUSB);
+}
+
+/**
+ * Get all Bluetooth-connected printers
+ * @returns Array of Bluetooth printer objects
+ */
+export async function getBluetoothPrinters(): Promise<Printer[]> {
+  const allPrinters = await getAllPrinters();
+  return allPrinters.filter((p) => p.isBluetooth);
 }
 
 /**
@@ -300,9 +320,15 @@ export async function printImage(
   let tempFilePath: string | null = null;
   let imagePath: string;
 
+  console.log(`\n🔧 printImage() called`);
+  console.log(`   Printer: "${printerName}"`);
+  console.log(`   Input type: ${Buffer.isBuffer(imagePathOrBuffer) ? 'Buffer' : 'File path'}`);
+  console.log(`   Options:`, options);
+
   try {
     // Handle Buffer input by creating a temporary file
     if (Buffer.isBuffer(imagePathOrBuffer)) {
+      console.log(`📦 Creating temporary file from buffer (${imagePathOrBuffer.length} bytes)...`);
       // Create a temporary file
       const tempDir = os.tmpdir();
       const timestamp = Date.now();
@@ -312,33 +338,56 @@ export async function printImage(
         `print-temp-${timestamp}-${randomId}.png`
       );
 
+      console.log(`💾 Writing to: ${tempFilePath}`);
       // Write buffer to temp file
       await fs.promises.writeFile(tempFilePath, imagePathOrBuffer);
       imagePath = tempFilePath;
+      console.log(`✅ Temporary file created successfully`);
     } else {
+      console.log(`📄 Using file path: ${imagePathOrBuffer}`);
       // Validate the image file path
       await validateImageFile(imagePathOrBuffer);
       imagePath = imagePathOrBuffer;
     }
 
     // Check if printer exists
+    console.log(`🔍 Verifying printer exists...`);
     const printers = await getAllPrinters();
     const printer = printers.find((p) => p.name === printerName);
 
     if (!printer) {
+      console.error(`❌ Printer "${printerName}" not found!`);
+      console.error(`Available printers: ${printers.map(p => p.name).join(', ')}`);
       throw new Error(`Printer not found: ${printerName}`);
     }
 
+    console.log(`✅ Printer found: "${printer.name}"`);
+    console.log(`   Status: ${printer.status}`);
+    console.log(`   URI: ${printer.uri}`);
+
     const command = buildPrintCommand(printerName, imagePath, options);
-    const { stdout } = await execAsync(command);
+    console.log(`\n🖨️ Executing print command:`);
+    console.log(`   ${command}`);
+    
+    const { stdout, stderr } = await execAsync(command);
+    
+    console.log(`📤 Command output:`);
+    if (stdout) console.log(`   stdout: ${stdout.trim()}`);
+    if (stderr) console.log(`   stderr: ${stderr.trim()}`);
 
     // Extract job ID from output
     // Output format: "request id is PrinterName-JobID (1 file(s))"
     const jobMatch = stdout.match(/request id is .+-(\d+)/);
     const jobId = jobMatch ? jobMatch[1] : stdout.trim();
 
+    console.log(`✅ Print job ID: ${jobId}`);
     return jobId;
   } catch (error) {
+    console.error(`\n❌ printImage() failed:`);
+    console.error(`   Error: ${error instanceof Error ? error.message : String(error)}`);
+    if (error instanceof Error && error.stack) {
+      console.error(`   Stack: ${error.stack}`);
+    }
     throw new Error(
       `Failed to print: ${
         error instanceof Error ? error.message : String(error)
@@ -348,11 +397,13 @@ export async function printImage(
     // Clean up temporary file if one was created
     if (tempFilePath) {
       try {
+        console.log(`🗑️ Cleaning up temporary file: ${tempFilePath}`);
         await fs.promises.unlink(tempFilePath);
+        console.log(`✅ Temporary file deleted`);
       } catch (error) {
         // Ignore cleanup errors
         console.warn(
-          `Warning: Could not delete temporary file: ${tempFilePath}`
+          `⚠️ Warning: Could not delete temporary file: ${tempFilePath}`
         );
       }
     }
@@ -377,6 +428,33 @@ export async function printToUSB(
 
   // Use the first USB printer or the default one if it's USB
   const printer = usbPrinters.find((p) => p.isDefault) || usbPrinters[0];
+
+  const jobId = await printImage(printer.name, imagePathOrBuffer, options);
+
+  return {
+    printerName: printer.name,
+    jobId,
+  };
+}
+
+/**
+ * Print an image to the first available Bluetooth printer
+ * @param imagePathOrBuffer Path to the image file or a Buffer containing the image data
+ * @param options Optional print settings
+ * @returns Object containing printer name and job ID
+ */
+export async function printToBluetooth(
+  imagePathOrBuffer: string | Buffer,
+  options: PrintOptions = {}
+): Promise<{ printerName: string; jobId: string }> {
+  const bluetoothPrinters = await getBluetoothPrinters();
+
+  if (bluetoothPrinters.length === 0) {
+    throw new Error("No Bluetooth printers found");
+  }
+
+  // Use the first Bluetooth printer or the default one if it's Bluetooth
+  const printer = bluetoothPrinters.find((p) => p.isDefault) || bluetoothPrinters[0];
 
   const jobId = await printImage(printer.name, imagePathOrBuffer, options);
 
@@ -480,9 +558,12 @@ export function watchAndResumePrinters(options: {
         // Check specific printers
         const allPrinters = await getAllPrinters();
         printersToCheck = allPrinters.filter(p => printerNames.includes(p.name));
+        console.log(`👀 Watching ${printersToCheck.length} specific printer(s): ${printersToCheck.map(p => p.name).join(', ')}`);
       } else {
-        // Check all USB printers by default
-        printersToCheck = await getUSBPrinters();
+        // Check all USB and Bluetooth printers by default
+        const allPrinters = await getAllPrinters();
+        printersToCheck = allPrinters.filter(p => p.isUSB || p.isBluetooth);
+        console.log(`👀 Watching ${printersToCheck.length} USB/Bluetooth printer(s): ${printersToCheck.map(p => p.name).join(', ')}`);
       }
 
       // Check each printer
@@ -490,6 +571,7 @@ export function watchAndResumePrinters(options: {
         const isEnabled = await isPrinterEnabled(printer.name);
 
         if (!isEnabled) {
+          console.log(`⚠️ Printer "${printer.name}" is paused/disabled, attempting to resume...`);
           await enablePrinter(printer.name);
           if (onResume) {
             onResume(printer.name);

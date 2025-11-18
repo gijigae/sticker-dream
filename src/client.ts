@@ -1,16 +1,3 @@
-import { pipeline } from "@huggingface/transformers";
-
-// Initialize the transcriber
-const transcriber = await pipeline(
-  "automatic-speech-recognition",
-  "Xenova/whisper-tiny.en",
-  {
-    progress_callback: (event) => {
-      // console.log(event);
-    },
-  }
-);
-
 // Get DOM elements
 const recordBtn = document.querySelector(".record") as HTMLButtonElement;
 const transcriptDiv = document.querySelector(".transcript") as HTMLDivElement;
@@ -59,45 +46,76 @@ async function resetRecorder() {
     // Remove recording class
     recordBtn.classList.remove("recording");
     recordBtn.classList.add("loading");
-    recordBtn.textContent = "Imagining...";
+    recordBtn.textContent = "Transcribing...";
 
-    // Create audio blob and URL
+    // Create audio blob
     const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
     const audioUrl = URL.createObjectURL(audioBlob);
     audioElement.src = audioUrl;
 
-    // Transcribe
-    transcriptDiv.textContent = "Transcribing...";
-    const output = await transcriber(audioUrl);
-    const text = Array.isArray(output) ? output[0].text : output.text;
-    transcriptDiv.textContent = text;
+    try {
+      // Transcribe using OpenAI API
+      transcriptDiv.textContent = "Transcribing...";
+      console.log(`🎤 Sending audio to server for transcription...`);
+      
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
 
-    console.log(output);
-    recordBtn.textContent = "Dreaming Up...";
+      const transcribeResponse = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: formData,
+      });
 
-    const abortWords = ["BLANK", "NO IMAGE", "NO STICKER", "CANCEL", "ABORT", "START OVER"];
-    if(!text || abortWords.some(word => text.toUpperCase().includes(word))) {
-      transcriptDiv.textContent = "No image generated.";
+      if (!transcribeResponse.ok) {
+        throw new Error(`Transcription failed: ${transcribeResponse.statusText}`);
+      }
+
+      const { text } = await transcribeResponse.json();
+      transcriptDiv.textContent = text;
+      console.log(`✅ Transcription: "${text}"`);
+
+      recordBtn.textContent = "Dreaming Up...";
+
+      const abortWords = ["BLANK", "NO IMAGE", "NO STICKER", "CANCEL", "ABORT", "START OVER"];
+      if(!text || abortWords.some(word => text.toUpperCase().includes(word))) {
+        transcriptDiv.textContent = "No image generated.";
+        recordBtn.classList.remove("loading");
+        recordBtn.textContent = "Cancelled";
+        setTimeout(() => {
+          recordBtn.textContent = "Sticker Dream";
+        }, 1000);
+        resetRecorder();
+        return;
+      }
+
+      // Actually generate and print the image!
+      try {
+        await generateAndPrint(text);
+        
+        // Stop loading state
+        recordBtn.classList.remove("loading");
+        recordBtn.textContent = "Printed!";
+        setTimeout(() => {
+          recordBtn.textContent = "Sticker Dream";
+        }, 1000);
+      } catch (error) {
+        console.error("Failed to generate and print:", error);
+        recordBtn.classList.remove("loading");
+        recordBtn.textContent = "Error!";
+        setTimeout(() => {
+          recordBtn.textContent = "Sticker Dream";
+        }, 2000);
+      }
+    } catch (error) {
+      console.error("Transcription error:", error);
+      transcriptDiv.textContent = "❌ Transcription failed";
       recordBtn.classList.remove("loading");
-      recordBtn.textContent = "Cancelled";
+      recordBtn.textContent = "Error!";
       setTimeout(() => {
         recordBtn.textContent = "Sticker Dream";
-      }, 1000);
-      resetRecorder();
-      return;
+      }, 2000);
     }
-
-    recordBtn.textContent = "Sending to Printer...";
-    await wait(3000);
-    recordBtn.textContent = "Printing...";
-    await wait(1500);
-
-    // Stop loading state
-    recordBtn.classList.remove("loading");
-    recordBtn.textContent = "Printed!";
-    setTimeout(() => {
-      recordBtn.textContent = "Sticker Dream";
-    }, 1000);
+    
     resetRecorder();
 
   };
@@ -167,7 +185,9 @@ async function generateAndPrint(prompt: string) {
   }
 
   try {
-    transcriptDiv.textContent = `${prompt}\n\nGenerating & Printing...`;
+    console.log(`🎨 Generating image for: "${prompt}"`);
+    recordBtn.textContent = "Generating image...";
+    transcriptDiv.textContent = `${prompt}\n\nGenerating image...`;
 
     const response = await fetch("/api/generate", {
       method: "POST",
@@ -181,6 +201,7 @@ async function generateAndPrint(prompt: string) {
       throw new Error(`Server error: ${response.statusText}`);
     }
 
+    recordBtn.textContent = "Printing...";
     const blob = await response.blob();
     const imageUrl = URL.createObjectURL(blob);
 
@@ -189,13 +210,10 @@ async function generateAndPrint(prompt: string) {
     imageDisplay.style.display = "block";
 
     transcriptDiv.textContent = prompt;
-    console.log("✅ Image generated and printed!");
+    console.log("✅ Image generated and sent to printer!");
   } catch (error) {
     console.error("Error:", error);
     transcriptDiv.textContent = `${prompt}\n\nError: Failed to generate image`;
-    alert(
-      "Failed to generate image: " +
-        (error instanceof Error ? error.message : "Unknown error")
-    );
+    throw error; // Re-throw so the calling code can handle it
   }
 }

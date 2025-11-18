@@ -7,9 +7,9 @@ A voice-activated sticker printer. Press and hold the button, describe what you 
 ## How it works
 
 1. Hold the button and speak (max 15 seconds)
-2. Whisper transcribes your voice
+2. Audio sent to OpenAI Whisper API for transcription
 3. Google Imagen generates a coloring page based on your description
-4. Image displays in browser and prints to USB thermal printer
+4. Image displays in browser and prints to your printer
 
 ## Setup
 
@@ -22,16 +22,32 @@ pnpm install
 2. Create `.env` file:
 
 ```
-GEMINI_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+PRINTER_NAME=Canon_XK130_series_2
 ```
 
-3. Connect a USB thermal printer. Currently only supports USB printer in MacOS - I would like to get this running with bluetooth or a receipt printer instead.
+- **OPENAI_API_KEY**: Get from [OpenAI Platform](https://platform.openai.com/api-keys) - used for Whisper transcription
+- **GEMINI_API_KEY**: Get from [Google AI Studio](https://aistudio.google.com/app/apikey) - used for image generation
+- **PRINTER_NAME**: Should match your printer's name exactly as it appears in System Preferences (use underscores, not spaces!)
+
+To see available printers, run the server and visit `http://localhost:3000/api/printers`.
+
+3. Connect a printer. The app now supports:
+   - Bluetooth printers (like your Canon XK130)
+   - USB printers
+   - Network printers (via Bonjour/AirPrint)
+   - Any printer configured in macOS
 
 ## Running
 
 Start the backend server:
 
 ```bash
+# Option 1: Direct command (recommended, shows output)
+./node_modules/.bin/tsx --env-file=.env --watch src/server.ts
+
+# Option 2: Using pnpm (runs in background, no output)
 pnpm server
 ```
 
@@ -41,7 +57,9 @@ Start the frontend (in another terminal):
 pnpm dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:7767`.
+
+**Note**: Due to pnpm's output buffering, `pnpm server` doesn't show logs. Use the direct tsx command to see server logs in real-time.
 
 To use your phone, you'll need to visit the page on your local network. Since it uses microphone access, this needs to be a secure origin. I use Cloudflare tunnels for this.
 

@@ -4,7 +4,7 @@ export default defineConfig({
   server: {
     port: 7767,
     host: true,
-    allowedHosts: ['local.wesbos.com'],
+    allowedHosts: ['72c3bcaa38cf.ngrok.app'],
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
